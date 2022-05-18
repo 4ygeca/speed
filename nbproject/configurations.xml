@@ -63,7 +63,6 @@
       <itemPath>spd.c</itemPath>
       <itemPath>eeprom.c</itemPath>
       <itemPath>fuel.c</itemPath>
-      <itemPath>newmain.c</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
