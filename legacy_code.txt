@@ -1,0 +1,272 @@
+/* @brief: Blinking by LED numbers of menu or others. */
+void LED_indicate (void)
+{
+    #define LED_SHORT_DELAY             10U
+    #define LED_LONG_DELAY              50U
+    #define LED_ON_DELAY                20U
+
+    static u8 LED_number_count = 0;
+    static u8 func_count = 0;
+    static u8 delay = 0;
+    enum LED_state {
+        LED_OFF,
+        LED_ON
+    };
+    static enum LED_state state = LED_OFF;
+    func_count++;
+    
+    if ((state == LED_OFF) && (func_count >= delay)) {
+        LED_SetHigh();
+        delay = LED_ON_DELAY;
+        state = LED_ON;
+        
+    } else if ((state == LED_ON) && (func_count >= delay)) {
+        LED_SetLow();
+        LED_number_count++;
+        
+        if (LED_number_count >= LED_number) {
+            LED_number_count = 0;
+            delay = LED_LONG_DELAY;
+        } else {
+            delay = LED_SHORT_DELAY;
+        }
+        state = LED_OFF;
+    }
+    
+}
+
+/* @brief: Button menu interface. */
+void button_check (void)
+{
+    #define LONG_PRESS      30U
+    #define SHORT_PRESS     10U
+    
+    enum  button_state {
+            OFF,
+            SHORT,
+            LONG
+    };
+        
+    struct button_t {
+        enum button_state state;
+        u8 count;
+    };
+    
+    static struct button_t button {OFF, 0 };
+    
+    if (BUTTON_is_pressed) {
+        if (button.count < UINT8_MAX) {
+            button.count++;
+        } else {
+            puts ("ERROR: BUTTON COUNT OVERFLOW.");
+        }
+    } else {
+        if (button.count >= LONG_PRESS) {
+            button.state = LONG;
+        } else if (button.count >= SHORT_PRESS) {
+            button.state = SHORT;
+        }
+        button.count = 0;
+        if (button.state == SHORT_PRESS) {
+            menu_change();
+        } else if (button.state == LONG_PRESS) {
+/* TODO: LED must be turned on when after LONG_PRESS detected, while button is pressed. */
+            if (menu != WORK) {
+                save_current();
+            } else {
+                test_spd_pwm();
+            }
+        }
+        button.state = OFF;
+    }
+    
+}
+
+
+/* @brief: Function read all calibration from EEPROM. 
+ *         Also write in EEPROM default values, if it's empty. */
+void read_calibration (void) 
+{
+    u16 address = DEFAULT_ADDRESS;
+    union {
+        float num;
+        u8 byte[sizeof(num)];
+    } f_data;
+    union {
+        u16 num;
+        u8 byte[sizeof(num)];
+    } s_data;
+    
+    /* If EEPROM is empty, then storage correction values. */
+    if (DATAEE_ReadByte (address) == EEPROM_DEFAULT_VALUE) {
+        
+        /* Storage default SPD_K correction value in EEPROM. SPD = k * x + a; */
+        spd_k = DEFAULT_SPD_MUL_CORR;
+        f_data.num = DEFAULT_SPD_MUL_CORR;
+        for (u8 i = 0; i < sizeof(f_data); i++) {
+            DATAEE_WriteByte (address + i, f_data.byte[i]);
+            DATAEE_WriteByte (address + i + ERROR_OFFSET, f_data.byte[i]);
+        }
+        address += NEXT_DATA_OFFSET;
+        
+        /* Storage default FUEL correction value in EEPROM. */
+        fuel_corr = DEFAULT_FUEL_CORR;
+        f_data.num = DEFAULT_FUEL_CORR;
+        for (u8 i = 0; i < sizeof(f_data); i++) {
+            DATAEE_WriteByte (address + i , f_data.byte[i]);
+            DATAEE_WriteByte (address + i + ERROR_OFFSET, f_data.byte[i]);
+        }
+        address += NEXT_DATA_OFFSET;
+        
+        /* Storage default SPD_A correction value in EEPROM. SPD = k * x + a; */
+        spd_a = DEFAULT_SPD_ADD_CORR;
+        s_data.num = DEFAULT_SPD_ADD_CORR;
+        for (u8 i = 0; i < sizeof(s_data); i++) {
+            DATAEE_WriteByte (address + i, s_data.byte[i]);
+            DATAEE_WriteByte (address + i + ERROR_OFFSET, s_data.byte[i]);
+        }
+        address += NEXT_DATA_OFFSET;
+        
+    } else {
+        
+        /* Read SPD_K correction value from EEPROM. SPD = k * x + a; */
+        for (u8 i = 0; i < sizeof(f_data); i++) {
+            f_data.byte[i] = DATAEE_ReadByte (address + i);
+        }
+        spd_k = f_data.num;
+        for (u8 i = 0; i < sizeof(f_data); i++) {
+            f_data.byte[i] = DATAEE_ReadByte (address + i + ERROR_OFFSET);
+        }
+        if (f_data.num != spd_k) {
+            puts ("ERROR: SPEED MULTIPLE CORRECTION.");
+            spd_k = DEFAULT_SPD_MUL_CORR;
+        }
+        address += NEXT_DATA_OFFSET;
+            
+        /* Read FUEL correction value from EEPROM.*/
+        for (u8 i = 0; i < sizeof(f_data); i++) {
+            f_data.byte[i] = DATAEE_ReadByte (address + i);
+        }
+        fuel_corr = f_data.num;
+        for (u8 i = 0; i < sizeof(f_data); i++) {
+            f_data.byte[i] = DATAEE_ReadByte (address + i + ERROR_OFFSET);
+        }
+        if (fuel_corr != f_data.num) {
+            puts ("ERROR: FUEL CORRECTION.");
+            fuel_corr = DEFAULT_FUEL_CORR;
+        }
+        address += NEXT_DATA_OFFSET;
+        
+        /* Read SPD_A correction value from EEPROM. SPD = k * x + a; */
+        for (u8 i = 0; i < sizeof(s_data); i++) {
+            s_data.byte[i] = DATAEE_ReadByte (address + i);
+        }
+        spd_a = s_data.num;
+        for (u8 i = 0; i < sizeof(s_data); i++) {
+            s_data.byte[i] = DATAEE_ReadByte (address + i + ERROR_OFFSET);
+        }
+        if (s_data.num != spd_a) {
+            puts ("ERROR: SPEED ADDITION CORRECTION.");
+            spd_a = DEFAULT_SPD_ADD_CORR;
+        }
+        address += NEXT_DATA_OFFSET;
+        
+    }
+}
+
+
+/* @brief: Save current correction to EEPROM. */
+void save_current (void)
+{
+    u16 address = DEFAULT_ADDRESS;
+
+    switch (menu) {
+        case SPD_MUL_CORR : 
+            union {
+                float num;
+                u8 byte[sizeof(num)];
+            } f_data;
+            
+            address = DEFAULT_ADDRESS;
+            f_data.num = spd_k;
+            for (u8 i = 0; i < sizeof(f_data); i++) {
+                DATAEE_WriteByte (address + i , f_data.byte[i]);
+                DATAEE_WriteByte (address + i + ERROR_OFFSET, f_data.byte[i]);
+            }
+#ifdef DEBUG
+            puts("INFO: SPEED MULTIPLE CORRECTION SAVED.");
+#endif
+            break;
+        
+        case FUEL_CORR : 
+            union {
+                float num;
+                u8 byte[sizeof(num)];
+            } f_data;
+            
+            address = DEFAULT_ADDRESS + (u8)(menu - 1) * NEXT_DATA_OFFSET;
+            f_data.num = fuel_corr;
+            for (u8 i = 0; i < sizeof(f_data); i++) {
+                DATAEE_WriteByte (address + i , f_data.byte[i]);
+                DATAEE_WriteByte (address + i + ERROR_OFFSET, f_data.byte[i]);
+            }
+#ifdef DEBUG
+            puts("INFO: FUEL CORRECTION SAVED.");
+#endif
+            break;
+        
+        case SPD_ADD_CORR : 
+            union {
+                u16 num;
+                u8 byte[sizeof(num)];
+            } s_data;
+            
+            address = DEFAULT_ADDRESS + (u8)(menu - 1) * NEXT_DATA_OFFSET;
+            s_data.num = spd_a;
+            for (u8 i = 0; i < sizeof(s_data); i++) {
+                DATAEE_WriteByte (address + i, s_data.byte[i]);
+                DATAEE_WriteByte (address + i + ERROR_OFFSET, s_data.byte[i]);
+            }
+#ifdef DEBUG
+            puts("INFO: SPEED ADDITION CORRECTION SAVED.");
+#endif
+            break;
+        
+        default : 
+            puts ("ERROR: MENU UNKNOWN STATE.");
+        
+    }
+}
+
+
+
+
+
+/* @brief: */
+void work (void)
+{
+    static u16 fuel = 0;
+    /* If first run, get fuel value.*/
+    if (fuel == 0) {
+        fuel = ADC_GetConversion (FUEL_ADC_INPUT);
+        
+    /* Check if FUEL channel not selected, then set it. */        
+    } else if (ADCON0bits.CHS != FUEL_ADC_INPUT) {
+        ADC_SelectChannel (FUEL_ADC_INPUT);
+        __delay_us(ACQ_US_DELAY);
+        fuel = ADC_GetConversion (FUEL_ADC_INPUT);
+        
+    /* Get fuel value from ADC, changed by auto-trigger. */    
+    } else if (!ADCON0bits.ADGO) {
+        fuel = ((ADRESH << 8) + ADRESL);
+    }
+
+    
+    PWM5_LoadDutyValue ((u16) fuel * fuel_corr);
+    
+#ifdef DEBUG
+    printf ("INFO: FUEL_CORR %d\n", fuel);
+#endif
+    
+    
+}
